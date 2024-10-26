@@ -1,3 +1,6 @@
+###############################################
+# Unit-MIDI synthesizer with Raspberry Pi PICO
+###############################################
 from machine import Pin, UART
 import utime
 
