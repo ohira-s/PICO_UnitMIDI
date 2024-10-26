@@ -1,9 +1,6 @@
 from machine import Pin, UART
 import utime
 
-note_on = [0x90, 64, 127]
-note_off = [0x90, 64, 0]
-
 ###################
 # Unit-MIDI class
 ###################
