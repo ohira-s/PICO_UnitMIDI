@@ -1,0 +1,17 @@
+Angie,ANGIE.MID,0.9
+Bohemian Rhapsody,BOHELOVE.MID,1.4
+Boy From New York City,BOYFRMNY.MID,2.6
+Bridge Over Troubled Waters,BLDGTBWAT.MID,1.0
+Dancing Queen,DANCINGQ.MID,1.3
+Hazy,HAZY.MID,1.5
+Honesty,HONESTY.MID,1.1
+Hotel California,HOTELCAL.MID,1.4
+Imagine,IMAGINE.MID,0.7
+Jump,JUMP.MID,1.7
+Killer Queen,KILLQUEN.MID,1.6
+Satisfaction,SATISFAC.MID,1.8
+Sound of Silence,SNDOFSLC.MID,1.5
+Take On Me,TAKEONME.MID,2.0
+We Build This City,WEBLDCTY.MID,2.0
+We Will Rock You,ROCKYOU.MID,1.0
+Your Song,YOURSONG.MID,1.4
