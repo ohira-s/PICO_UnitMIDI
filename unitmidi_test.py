@@ -5,6 +5,14 @@ from machine import Pin, UART
 import time, utime, os, json
 import random
 
+# Class objects
+sdcard_obj     = None     # SD Card
+midi_obj       = None     # MIDI
+#smf_player_obj = None     # Standard MIDI File Player
+sequencer_obj  = None     # Sequencer
+application    = None     # Application
+
+
 ###################
 ### SD card class
 ###   Use internal file system in PICO.
@@ -282,7 +290,6 @@ class midi_class:
         self.synth.set_vibrate(channel, rate, depth, delay)
 
 ################# End of MIDI Class Definition #################
-
 
 
 ###################
@@ -1308,15 +1315,14 @@ if __name__ == '__main__':
 
         # Sequencer object
         sequencer_obj = sequencer_class(midi_obj, sdcard_obj)
-        sequencer_obj.seq_file_number = 997
-        sequencer_obj.sequencer_load_file(sequencer_obj.set_sequencer_file_path(), sequencer_obj.seq_file_number)
+        sequencer_obj.sequencer_load_file(sequencer_obj.set_sequencer_file_path(), 997)
         sequencer_obj.send_all_sequencer_settings()
         sequencer_obj.pre_play_sequencer()
         sequencer_obj.play_sequencer(None, None, None, None)
 
         # Retrieve the cursor position
         sequencer_obj.post_play_sequencer()
-        
+
         # PICO settings
         led = Pin("LED", Pin.OUT, value=0)
         
