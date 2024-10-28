@@ -1,17 +1,38 @@
 ###############################################
 # Unit-MIDI synthesizer with Raspberry Pi PICO
 ###############################################
-from machine import Pin, UART
+from machine import Pin, UART, I2C
 import time, utime, os, json
 import random
 
 # Class objects
 sdcard_obj     = None     # SD Card
+joystick_obj   = None     # Joy Stick
 midi_obj       = None     # MIDI
 #smf_player_obj = None     # Standard MIDI File Player
 sequencer_obj  = None     # Sequencer
 application    = None     # Application
 
+
+########################
+# Device Manager Class
+########################
+class device_manager_class():
+  # Constructor
+  def __init__(self):
+    self.devices = []
+
+  # Add a device
+  def add_device(self, device):
+    self.devices.append(device)
+
+  # Call device controller in each device
+  def device_control(self):
+    for device in self.devices:
+      device.controller()
+
+################# End of Device Controller Class Definition #################
+                
 
 ###################
 ### SD card class
@@ -100,7 +121,7 @@ class MIDIUnit:
         self._uart.write(midi_msg)
     
     def set_master_volume(self, vol):
-        midi_msg = bytearray([0xF0, 0x7F, 0x7F, 0x04, 0x01, 0, vol, 0xF7])
+        midi_msg = bytearray([0xF0, 0x7F, 0x7F, 0x04, 0x01, 0, vol & 0x7f, 0xF7])
         self.midi_out(midi_msg)
 
     def set_instrument(self, gmbank, channel, prog):
@@ -142,6 +163,16 @@ class MIDIUnit:
     def set_vibrate(self, channel, rate, depth, delay):
         status_byte = 0xB0 + channel
         midi_msg = bytearray([status_byte, 0x63, 0x01, 0x62, 0x08, 0x06, rate, status_byte, 0x63, 0x01, 0x62, 0x09, 0x06, depth, status_byte, 0x63, 0x01, 0x62, 0x0A, 0x06, delay])
+        self.midi_out(midi_msg)
+
+    def set_pitch_bend(self, channel, value):
+        status_byte = 0xE0 + channel
+        midi_msg = bytearray([status_byte, value & 0xef, (value >> 7) & 0xff])
+        self.midi_out(midi_msg)
+
+    def set_pitch_bend_range(self, channel, value):
+        status_byte = 0xB0 + channel
+        midi_msg = bytearray([status_byte, 0x65, 0x00, 0x64, 0x00, 0x06, value & 0x7f])
         self.midi_out(midi_msg)
 
 ################# End of Unit-MIDI Class Definition #################
@@ -288,6 +319,14 @@ class midi_class:
     # Vibrate
     def set_vibrate(self, channel, rate, depth, delay):
         self.synth.set_vibrate(channel, rate, depth, delay)
+
+    # Pitch Bend
+    def set_pitch_bend(self, channel, value):
+        self.synth.set_pitch_bend(channel, value)
+
+    # Pitch Bend Range
+    def set_pitch_bend_range(self, channel, value):
+        self.synth.set_pitch_bend_range(channel, value)
 
 ################# End of MIDI Class Definition #################
 
@@ -1302,17 +1341,50 @@ def notes_off(midi_obj, notes):
     for note in notes:
         print("NOTE ON :", midi_obj.key_name(note))
         midi_obj.set_note_off(0, note)
-        
-# Main program
-if __name__ == '__main__':
-    try:
-        # SD cars (Internal memory file for PICO)
-        sdcard_obj = sdcard_class()
-                
-        # Synthesizer objects
-        unit_midi_obj = MIDIUnit(0)
-        midi_obj = midi_class(unit_midi_obj, sdcard_obj)
 
+
+######################
+### Joy Stick Device
+######################
+class device_joystick_class:
+    def __init__(self, device_manager, address=82, unit=0, scl_pin=9, sda_pin=8, frequency=400000):
+        self.callback_delegate = self.callback_values
+        self.i2c = I2C(unit, scl=Pin(scl_pin), sda=Pin(sda_pin), freq=frequency)
+        device_list = self.i2c.scan()
+        print('I2C DEVICES:', device_list)
+        
+        if address in device_list:
+            device_manager.add_device(self)
+        else:
+            print('CAN NOT FIND I2C DEVICE AT THE ADDRESS:', address)
+
+    def delegate(self, callback_function):
+        self.callback_delegate = self.callback_values = callback_function
+
+    def callback_values(self, joys_x, joys_y, joys_b):
+        print('JOY STICK x, y, b:', joys_x, joys_y, joys_b)
+        
+    def controller(self):
+        try:
+            joystick = self.i2c.readfrom(82, 3)
+            joys_x = int.from_bytes(joystick[0:1], 'little', True)
+            joys_y = int.from_bytes(joystick[1:2], 'little', True)
+            joys_b = int.from_bytes(joystick[2:3], 'little', True)
+            self.callback_delegate(joys_x, joys_y, joys_b)
+
+
+        except:
+            print('I2C ERROR.')
+            
+################# End of Joy Stick Device Class Definition #################
+
+
+# Joy Stick delegateion of device controller
+def device_joystick_controller(joy_x, joy_y, joy_b):
+    print('JOYSTICK DELEGATED:', joy_x, joy_y, joy_b)
+
+    # Sequencer player
+    if joy_b == 1:
         # Sequencer object
         sequencer_obj = sequencer_class(midi_obj, sdcard_obj)
         sequencer_obj.sequencer_load_file(sequencer_obj.set_sequencer_file_path(), 997)
@@ -1323,6 +1395,37 @@ if __name__ == '__main__':
         # Retrieve the cursor position
         sequencer_obj.post_play_sequencer()
 
+    # Master volume test
+    print('MASTRE VOLUME:', int(joy_y / 255 * 127))
+    midi_obj.set_master_volume(int(joy_y / 255 * 127))
+#    midi_obj.set_master_volume(40)
+
+    # Pitch Bend
+    print('PITCH BEND:', joy_x)
+    midi_obj.set_pitch_bend_range(0, 120)
+    if joy_x <= 80:
+        midi_obj.set_pitch_bend(0, 0)
+    elif joy_x >= 176:
+        midi_obj.set_pitch_bend(0, 10000)
+
+
+# Main program
+if __name__ == '__main__':
+    try:
+        # SD cars (Internal memory file for PICO)
+        sdcard_obj = sdcard_class()
+
+        # Device Manager
+        device_manager_obj = device_manager_class()
+        
+        # Joy Stick
+        joystick_obj = device_joystick_class(device_manager_obj)
+        joystick_obj.delegate(device_joystick_controller)
+
+        # Synthesizer objects
+        unit_midi_obj = MIDIUnit(0)
+        midi_obj = midi_class(unit_midi_obj, sdcard_obj)
+
         # PICO settings
         led = Pin("LED", Pin.OUT, value=0)
         
@@ -1332,9 +1435,6 @@ if __name__ == '__main__':
         play_at = 0
         effect = -1
         while True:
-            # Master volume test
-#            midi_obj.set_master_volume(int(127 / (play_at + 1)))
-
             # Effector test
             if play_at == 0:
                 effect = (effect + 1) % 6
@@ -1363,6 +1463,10 @@ if __name__ == '__main__':
             notes = score[play_at]
             led.value(1)
             notes_on(midi_obj, notes)
+
+            # Device management
+            device_manager_obj.device_control()
+
             utime.sleep_ms(1000)
 
             led.value(0)
