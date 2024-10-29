@@ -226,7 +226,7 @@ class MIDIUnit:
         status_byte = 0xE0 + channel
         lsb = value & 0x7f					# Least
         msb = (value >> 7) & 0x7f			# Most
-        print('PITCH BEND value=', channel, value, lsb, msb) 
+#        print('PITCH BEND value=', channel, value, lsb, msb) 
         midi_msg = bytearray([status_byte, lsb, msb])
 #        midi_msg = bytearray([status_byte, value & 0xef, (value >> 7) & 0xff])		# Original
         self.midi_out(midi_msg)
@@ -1432,78 +1432,137 @@ class device_joystick_class:
             joys_y = int.from_bytes(joystick[1:2], 'little', True)
             joys_b = int.from_bytes(joystick[2:3], 'little', True)
             self.callback_delegate(joys_x, joys_y, joys_b)
-
-
         except:
             print('I2C ERROR.')
             
 ################# End of Joy Stick Device Class Definition #################
 
 
-# Joy Stick delegateion of device controller
-def device_joystick_controller(joy_x, joy_y, joy_b):
-    print('JOYSTICK DELEGATED:', joy_x, joy_y, joy_b)
+#######################
+### Application class
+#######################
+class unipico_application_class:
+    # Constructor
+    def __init__(self):
+        self.lock = False
+        self.order_queuer = []
 
-    # Sequencer player
-    if joy_b == 1:
-        # Sequencer object
-        sequencer_obj = sequencer_class(midi_obj, sdcard_obj)
+        self.sequencer_playing = False
+        self.sequencer_pause = False
+        self.sequencer_stop = False
+
+        self.joystick_x = -1
+        self.joystick_y = -1
+        self.joystick_b = False
+
+    # Make an order to the application, orders come from other functions including thread process.
+    #   order: A string text of the order
+    #   args : Arguments tuple
+    def make_order(self, order, args):
+        while self.lock:
+            utime.sleep_ms(50)
+            
+        self.lock = True
+        self.order_queuer.append((order, args))
+        self.lock = False
+    
+    # Get a first order and do it
+    def get_order(self):
+        while self.lock:
+            utime.sleep_ms(50)
+            
+        self.lock = True
+        if len(self.order_queuer) > 0:
+            order = self.order_queuer.pop()
+
+        else:
+            order = None
+
+        self.lock = False
+        return order
+
+    # Get an order to pause or stop sequncer
+    def sequencer_pause_or_stop(self):
+        return self.sequencer_stop
+
+    # Get an order to pause to stop sequncer
+    def sequencer_pause_to_stop(self):
+        return 1
+
+    # Joy Stick delegateion of device controller
+    def device_joystick_controller(self, joy_x, joy_y, joy_b):
+        # Sequencer player
+        if joy_b == 1:
+            # Stop trigger
+            if self.sequencer_playing:
+                self.sequencer_pause = True
+            
+            # Play
+            else:
+                self.sequencer_playing = True
+                self.make_order('play sequencer', (977,))
+                utime.sleep_ms(1000)
+        
+        # Stop playing
+        elif self.sequencer_pause:
+            self.sequencer_stop =True
+            self.sequencer_pause = False
+            utime.sleep_ms(1000)
+
+        # Master volume
+        if self.joystick_y != joy_y:
+#            print('MASTRE VOLUME:', int(joy_y / 255 * 127))
+            midi_obj.set_master_volume(int(joy_y / 255 * 127))
+            self.joystick_y = joy_y
+
+        # Pitch Bend
+        if self.joystick_x != joy_x:
+            if joy_x <= 100:
+#                print('PITCH BEND -:', joy_x)
+                midi_obj.set_pitch_bend(0, 0x1fff - int(0x1fff * (100 - joy_x) / 100))
+            elif joy_x >= 155:
+#                print('PITCH BEND +:', joy_x)
+                midi_obj.set_pitch_bend(0, 0x1fff + int(0x1fff * (joy_x - 155) / 100))
+            else:
+                midi_obj.set_pitch_bend(0, 0x1fff)
+
+            self.joystick_x = joy_x
+
+    # ORDER: play sequencer
+    def order_play_sequencer(self, file_num):
+        self.sequencer_playing = True
+        self.sequencer_pause = False
+        self.sequencer_stop = False
         sequencer_obj.sequencer_load_file(sequencer_obj.set_sequencer_file_path(), 997)
         sequencer_obj.send_all_sequencer_settings()
         sequencer_obj.pre_play_sequencer()
-        sequencer_obj.play_sequencer(None, None, None, None)
+        sequencer_obj.play_sequencer(self.sequencer_pause_or_stop, self.sequencer_pause_to_stop, None, None)
 
         # Retrieve the cursor position
         sequencer_obj.post_play_sequencer()
+        self.sequencer_playing = False
+        self.sequencer_pause = False
+        self.sequencer_stop = False
 
-    # Master volume test
-    print('MASTRE VOLUME:', int(joy_y / 255 * 127))
-    midi_obj.set_master_volume(int(joy_y / 255 * 127))
-
-
-    # Pitch Bend
-    if joy_x <= 100:
-        print('PITCH BEND -:', joy_x)
-        midi_obj.set_pitch_bend(0, 0x1fff - int(0x1fff * (100 - joy_x) / 100))
-    elif joy_x >= 155:
-        print('PITCH BEND +:', joy_x)
-        midi_obj.set_pitch_bend(0, 0x1fff + int(0x1fff * (joy_x - 155) / 100))
-    else:
-        midi_obj.set_pitch_bend(0, 0x1fff)
-
-    
-
-# Main program
-if __name__ == '__main__':
-    try:
-        # SD cars (Internal memory file for PICO)
-        sdcard_obj = sdcard_class()
-
-        # Device Manager
-        device_manager_obj = device_manager_class()
-        
-        # Joy Stick
-        joystick_obj = device_joystick_class(device_manager_obj)
-        joystick_obj.delegate(device_joystick_controller)
-        
-        # Synthesizer objects
-        unit_midi_obj = MIDIUnit(0)
-        midi_obj = midi_class(unit_midi_obj, sdcard_obj)
-        midi_obj.set_pitch_bend_range(0, 5)
-
+    # Application main loop
+    def app_loop(self):     
         # PICO settings
         led = Pin("LED", Pin.OUT, value=0)
 
-        # Device control in a thread
-        thread_manager_obj = thread_manager_class()
-        thread_manager_obj.start(device_manager_obj.device_control_thread, (thread_manager_obj, 5,))
-        
-        # Play UnitMIDI with flashing a LED on PICO board
+        # Play test data
         score = [(60,), (64,), (67,), (60, 64, 67)]
         steps = len(score)
         play_at = 0
         effect = -1
+        
+        # Play UnitMIDI with flashing a LED on PICO board
         while True:
+            # Order to the application
+            order = self.get_order()
+            if not order is None:
+                if order[0] == 'play sequencer':
+                    self.order_play_sequencer(order[1])
+                
             # Effector test
             if play_at == 0:
                 effect = (effect + 1) % 6
@@ -1542,6 +1601,40 @@ if __name__ == '__main__':
             # Next notes on the score
             play_at = (play_at + 1) % steps
             
+################# End of Application class #################
+
+
+# Main program
+if __name__ == '__main__':
+    try:
+        # Appication
+        application = unipico_application_class()
+
+        # SD cars (Internal memory file for PICO)
+        sdcard_obj = sdcard_class()
+
+        # Device Manager
+        device_manager_obj = device_manager_class()
+        
+        # Joy Stick
+        joystick_obj = device_joystick_class(device_manager_obj)
+        joystick_obj.delegate(application.device_joystick_controller)
+        
+        # Synthesizer objects
+        unit_midi_obj = MIDIUnit(0)
+        midi_obj = midi_class(unit_midi_obj, sdcard_obj)
+        midi_obj.set_pitch_bend_range(0, 5)
+
+        # Sequencer object
+        sequencer_obj = sequencer_class(midi_obj, sdcard_obj)
+
+        # Device control in a thread
+        thread_manager_obj = thread_manager_class()
+        thread_manager_obj.start(device_manager_obj.device_control_thread, (thread_manager_obj, 5,))
+
+        # Application loop
+        application.app_loop()
+        
     except Exception as e:
         print('Catch exception at main loop:', e)
         
