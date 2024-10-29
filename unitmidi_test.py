@@ -4,35 +4,92 @@
 from machine import Pin, UART, I2C
 import time, utime, os, json
 import random
+import _thread
 
 # Class objects
-sdcard_obj     = None     # SD Card
-joystick_obj   = None     # Joy Stick
-midi_obj       = None     # MIDI
-#smf_player_obj = None     # Standard MIDI File Player
-sequencer_obj  = None     # Sequencer
-application    = None     # Application
+sdcard_obj         = None   # SD Card
+device_manager_obj = None   # Device manager
+thread_manager_obj = None   # Thread manager
+joystick_obj       = None   # Joy Stick
+midi_obj           = None   # MIDI
+sequencer_obj      = None   # Sequencer
+application        = None   # Application
 
 
 ########################
 # Device Manager Class
 ########################
 class device_manager_class():
-  # Constructor
-  def __init__(self):
-    self.devices = []
+    # Constructor
+    def __init__(self):
+        self.devices = []
 
-  # Add a device
-  def add_device(self, device):
-    self.devices.append(device)
+    # Add a device
+    def add_device(self, device):
+        self.devices.append(device)
 
-  # Call device controller in each device
-  def device_control(self):
-    for device in self.devices:
-      device.controller()
+    # Call device controller in each device
+    def device_control(self):
+        for device in self.devices:
+            device.controller()
 
+    # Call device controller in a thread
+    def device_control_thread(self, thread_manager, timer=10):
+        while not thread_manager.exit_thread():
+            self.device_control()
+            utime.sleep_ms(timer)
+            
+        thread_manager.exit_thread(True)
+        
 ################# End of Device Controller Class Definition #################
-                
+
+
+########################
+# Thread Manager Class
+########################
+class thread_manager_class():
+    # Constructor
+    def __init__(self):
+        self.working = False
+        self.stop = False
+        
+    # Get thread working status
+    def is_working(self):
+        return self.working
+        
+    # Get thread stop status
+    def will_be_stopped(self):
+        return self.stop
+        
+    # Set / Get thread stop flag, nust be called when a thread is terminated in the thread process.
+    def exit_thread(self, flag=None):
+        if not flag is None:
+            self.working = False
+
+        return self.stop
+
+    # Stop thread
+    def stop_thread(self):
+        self.stop = True
+        while self.is_working():
+            utime.sleep_ms(10)
+            
+        self.stop = False
+
+    # Start thread
+    def start(self, func, args):
+        if self.is_working() or self.will_be_stopped():
+            return False
+        
+        try:
+            _thread.start_new_thread(func, args)
+            self.working = True
+            return True
+        except:
+            self.working = False
+            self.stop = False
+            return False
+
 
 ###################
 ### SD card class
@@ -167,7 +224,11 @@ class MIDIUnit:
 
     def set_pitch_bend(self, channel, value):
         status_byte = 0xE0 + channel
-        midi_msg = bytearray([status_byte, value & 0xef, (value >> 7) & 0xff])
+        lsb = value & 0x7f					# Least
+        msb = (value >> 7) & 0x7f			# Most
+        print('PITCH BEND value=', channel, value, lsb, msb) 
+        midi_msg = bytearray([status_byte, lsb, msb])
+#        midi_msg = bytearray([status_byte, value & 0xef, (value >> 7) & 0xff])		# Original
         self.midi_out(midi_msg)
 
     def set_pitch_bend_range(self, channel, value):
@@ -1398,16 +1459,19 @@ def device_joystick_controller(joy_x, joy_y, joy_b):
     # Master volume test
     print('MASTRE VOLUME:', int(joy_y / 255 * 127))
     midi_obj.set_master_volume(int(joy_y / 255 * 127))
-#    midi_obj.set_master_volume(40)
+
 
     # Pitch Bend
-    print('PITCH BEND:', joy_x)
-    midi_obj.set_pitch_bend_range(0, 120)
-    if joy_x <= 80:
-        midi_obj.set_pitch_bend(0, 0)
-    elif joy_x >= 176:
-        midi_obj.set_pitch_bend(0, 10000)
+    if joy_x <= 100:
+        print('PITCH BEND -:', joy_x)
+        midi_obj.set_pitch_bend(0, 0x1fff - int(0x1fff * (100 - joy_x) / 100))
+    elif joy_x >= 155:
+        print('PITCH BEND +:', joy_x)
+        midi_obj.set_pitch_bend(0, 0x1fff + int(0x1fff * (joy_x - 155) / 100))
+    else:
+        midi_obj.set_pitch_bend(0, 0x1fff)
 
+    
 
 # Main program
 if __name__ == '__main__':
@@ -1421,13 +1485,18 @@ if __name__ == '__main__':
         # Joy Stick
         joystick_obj = device_joystick_class(device_manager_obj)
         joystick_obj.delegate(device_joystick_controller)
-
+        
         # Synthesizer objects
         unit_midi_obj = MIDIUnit(0)
         midi_obj = midi_class(unit_midi_obj, sdcard_obj)
+        midi_obj.set_pitch_bend_range(0, 5)
 
         # PICO settings
         led = Pin("LED", Pin.OUT, value=0)
+
+        # Device control in a thread
+        thread_manager_obj = thread_manager_class()
+        thread_manager_obj.start(device_manager_obj.device_control_thread, (thread_manager_obj, 5,))
         
         # Play UnitMIDI with flashing a LED on PICO board
         score = [(60,), (64,), (67,), (60, 64, 67)]
@@ -1459,16 +1528,13 @@ if __name__ == '__main__':
             print('INSTRUMENT:', gm_program_name)
             midi_obj.set_instrument(0, 0, gm_program_no)
             
-            # Note-on / Note-off
+            # Note-on
             notes = score[play_at]
             led.value(1)
             notes_on(midi_obj, notes)
-
-            # Device management
-            device_manager_obj.device_control()
-
             utime.sleep_ms(1000)
 
+            # Note-off
             led.value(0)
             notes_off(midi_obj, notes)
             utime.sleep_ms(500)
@@ -1482,3 +1548,10 @@ if __name__ == '__main__':
     finally:
         print('All notes off to quit the application.')
         midi_obj.set_all_notes_off()
+        
+        print('Terminate device controller.')
+        while thread_manager_obj.is_working():
+            thread_manager_obj.stop_thread()
+            utime.sleep_ms(1000)
+            
+        print('Exit.')
