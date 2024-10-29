@@ -1437,6 +1437,14 @@ class device_joystick_class:
             
 ################# End of Joy Stick Device Class Definition #################
 
+class midi_in_instrument_class:
+    def __init__(self, device_manager, midi_obj):
+        self.midi_obj = midi_obj
+        device_manager.add_device(self)
+    
+    def controller(self):
+        self.midi_obj.midi_in_out()
+
 
 #######################
 ### Application class
@@ -1587,16 +1595,18 @@ class unipico_application_class:
             print('INSTRUMENT:', gm_program_name)
             midi_obj.set_instrument(0, 0, gm_program_no)
             
+            utime.sleep_ms(5000)
+            
             # Note-on
-            notes = score[play_at]
-            led.value(1)
-            notes_on(midi_obj, notes)
-            utime.sleep_ms(1000)
+#            notes = score[play_at]
+#            led.value(1)
+#            notes_on(midi_obj, notes)
+#            utime.sleep_ms(1000)
 
             # Note-off
-            led.value(0)
-            notes_off(midi_obj, notes)
-            utime.sleep_ms(500)
+#            led.value(0)
+#            notes_off(midi_obj, notes)
+#            utime.sleep_ms(500)
             
             # Next notes on the score
             play_at = (play_at + 1) % steps
@@ -1624,6 +1634,9 @@ if __name__ == '__main__':
         unit_midi_obj = MIDIUnit(0)
         midi_obj = midi_class(unit_midi_obj, sdcard_obj)
         midi_obj.set_pitch_bend_range(0, 5)
+
+        # External MIDI-IN instrument
+        midi_in_instrument = midi_in_instrument_class(device_manager_obj, midi_obj)
 
         # Sequencer object
         sequencer_obj = sequencer_class(midi_obj, sdcard_obj)
