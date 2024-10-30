@@ -491,6 +491,235 @@ class midi_class:
 ################# End of MIDI Class Definition #################
 
 
+########################
+# MIDI-IN Player class
+########################
+class midi_in_player_class():
+  def __init__(self, midi_obj, sdcard_obj):
+    self.sdcard_obj = sdcard_obj
+    self.midi_obj = midi_obj
+    self.midi_in_ch = 0                               # MIDI IN channel to edit
+    self.midi_in_set_num = 0                          # MIDI IN setting file number to load/save
+    self.MIDI_IN_FILE_PATH = '/SYNTH/MIDIUNIT/' 	  # MIDI IN setting files path
+    self.MIDI_SET_FILES_MAX = 1000                    # Maximum MIDI IN setting files
+
+    # MIDI-IN player
+    self.midi_in_settings = []                        # MIDI IN settings for each channel, see setup()
+                                                      # Each channel has following data structure
+                                                      #     {'program':0, 'gmbank':0, 'reverb':[0,0,0], 'chorus':[0,0,0,0], 'vibrate':[0,0,0]}
+                                                      #     {'program':PROGRAM, 'gmbank':GM BANK, 'reverb':[PROGRAM,LEVEL,FEEDBACK], 'chorus':[PROGRAM,LEVEL,FEEDBACK,DELAY], 'vibrate':[RATE,DEPTH,DELAY]}
+
+    # SYNTH settings
+    for ch in range(16):
+      self.midi_in_settings.append({'program':0, 'gmbank':0, 'reverb':[0,0,0], 'chorus':[0,0,0,0], 'vibrate':[0,0,0]})
+
+  # Set midi_in_setting
+  def set_midi_in_setting(self, val):
+    self.midi_in_settings = val
+
+  def set_midi_in_setting3(self, channel, key_str, val):
+    self.midi_in_settings[channel][key_str] = val
+
+  def set_midi_in_setting4(self, channel, key_str, idx, val):
+    self.midi_in_settings[channel][key_str][idx] = val
+
+  # Get midi_in_setting
+  def get_midi_in_setting(self, channel = None, key_str = None):
+    if channel is None:
+      return self.midi_in_settings
+    
+    if key_str is None:
+      return self.midi_in_settings[channel]
+
+    return self.midi_in_settings[channel][key_str]
+
+  # Set/Get the current MIDI-IN channel
+  def midi_in_channel(self, channel = None):
+    if channel is None:
+      return self.midi_in_ch
+    
+    self.midi_in_ch = channel
+    return self.midi_in_ch
+
+  # Set/Get midi_in_set_num
+  def set_midi_in_set_num(self, num = None):
+    if num is None:
+      return self.midi_in_set_num
+    
+    self.midi_in_set_num = num % self.MIDI_SET_FILES_MAX
+    return self.midi_in_set_num
+
+  # Set/Get MIDI_IN_FILE_PATH
+  def set_midi_in_file_path(self, path = None):
+    if path is None:
+      return self.MIDI_IN_FILE_PATH
+    
+    self.MIDI_IN_FILE_PATH = path
+    return self.MIDI_IN_FILE_PATH
+
+  # Set/Get MIDI_SET_FILES_MAX
+  def set_midi_set_files_max(self, num = None):
+    if num is None:
+      return self.MIDI_SET_FILES_MAX
+    
+    self.MIDI_SET_FILES_MAX = num
+    return self.MIDI_SET_FILES_MAX
+
+  # Write MIDI IN settings to SD card
+  #   num: File number (0..999)
+  def write_midi_in_settings(self, num):
+    # Write MIDI IN settings as JSON file
+    self.sdcard_obj.json_write(self.MIDI_IN_FILE_PATH, 'MIDISET{:0=3d}.json'.format(num), self.midi_in_settings)
+
+  # Read MIDI IN settings from SD card
+  #   num: File number (0..999)
+  def read_midi_in_settings(self, num):
+    # Read MIDI IN settings JSON file
+    rdjson = None
+    rdjson = self.sdcard_obj.json_read(self.MIDI_IN_FILE_PATH, 'MIDISET{:0=3d}.json'.format(num))
+    if not rdjson is None:
+      # Default values
+      for ch in range(16):
+        kys = rdjson[ch]
+        if not 'program' in kys:
+          rdjson[ch]['program'] = 0
+        if not 'gmbank' in kys:
+          rdjson[ch]['gmbank'] = 0
+        if not 'reverb' in kys:
+          rdjson[ch]['reverb'] = [0,0,0]
+        if not 'chorus' in kys:
+          rdjson[ch]['chorus'] = [0,0,0,0]
+        if not 'vibrate' in kys:
+          rdjson[ch]['vibrate'] = [0,0,0]
+    
+    return rdjson
+
+  # Send a MIDI channel settings to Unit-MIDI
+  #   ch: MIDI channel
+  def send_midi_in_settings(self, ch):
+    self.midi_obj.set_instrument(self.midi_in_settings[ch]['gmbank'], ch, self.midi_in_settings[ch]['program'])
+    self.midi_obj.set_reverb(ch, self.midi_in_settings[ch]['reverb'][0], self.midi_in_settings[ch]['reverb'][1], self.midi_in_settings[ch]['reverb'][2])
+    self.midi_obj.set_chorus(ch, self.midi_in_settings[ch]['chorus'][0], self.midi_in_settings[ch]['chorus'][1], self.midi_in_settings[ch]['chorus'][2], self.midi_in_settings[ch]['chorus'][3])
+    self.midi_obj.set_vibrate(ch, self.midi_in_settings[ch]['vibrate'][0], self.midi_in_settings[ch]['vibrate'][1], self.midi_in_settings[ch]['vibrate'][2])
+
+  # Send all MIDI channel settings
+  def send_all_midi_in_settings(self):
+    for ch in range(16):
+      self.send_midi_in_settings(ch)
+
+  # Set and show new MIDI channel for MIDI-IN player
+  #   dlt: MIDI channel delta value added to the current MIDI IN channel to edit.
+  def set_midi_in_channel(self, dlt):
+    self.midi_in_ch = (self.midi_in_ch + dlt) % 16
+    self.set_midi_in_program(0)
+
+    midi_in_reverb = self.midi_in_settings[self.midi_in_ch]['reverb']
+    self.set_midi_in_reverb(midi_in_reverb[0], midi_in_reverb[1], midi_in_reverb[2])
+
+    midi_in_chorus = self.midi_in_settings[self.midi_in_ch]['chorus']
+    self.set_midi_in_chorus(midi_in_chorus[0], midi_in_chorus[1], midi_in_chorus[2], midi_in_chorus[3])
+
+    midi_in_vibrate = self.midi_in_settings[self.midi_in_ch]['vibrate']
+    self.set_midi_in_vibrate(midi_in_vibrate[0], midi_in_vibrate[1], midi_in_vibrate[2])
+
+    return self.midi_in_ch
+
+  # Set and show new program to the current MIDI channel for MIDI-IN player
+  #   dlt: GM program delta value added to the current MIDI IN channel to edit.
+  def set_midi_in_program(self, dlt):
+    self.midi_in_settings[self.midi_in_ch]['program'] = (self.midi_in_settings[self.midi_in_ch]['program'] + dlt) % 128
+    midi_in_program = self.midi_in_settings[self.midi_in_ch]['program']
+    self.midi_obj.set_instrument(self.midi_in_settings[self.midi_in_ch]['gmbank'], self.midi_in_ch, midi_in_program)
+
+
+  # Set and show new master volume value
+  #   dlt: Master volume delta value added to the current value.
+  def set_synth_master_volume(self, dlt):
+    master_volume = self.midi_obj.get_master_volume() + dlt
+    if master_volume < 1:
+      master_volume = 0
+    elif master_volume > 127:
+      master_volume = 127
+
+    self.midi_obj.set_master_volume(master_volume)
+
+
+  # Set reverb parameters for the current MIDI IN channel
+  #   prog : Reverb program
+  #   level: Reverb level
+  #   fback: Reverb feedback
+  def set_midi_in_reverb(self, prog=None, level=None, fback=None):
+    disp = None
+    if not prog is None:
+      self.midi_in_settings[self.midi_in_ch]['reverb'][0] = prog
+      disp = prog
+
+    if not level is None:
+      self.midi_in_settings[self.midi_in_ch]['reverb'][1] = level
+      disp = level
+      
+    if not fback is None:
+      self.midi_in_settings[self.midi_in_ch]['reverb'][2] = fback
+      disp = fback
+
+    midi_in_reverb = self.midi_in_settings[self.midi_in_ch]['reverb']
+    if not disp is None:
+      self.midi_obj.set_reverb(self.midi_in_ch, midi_in_reverb[0], midi_in_reverb[1], midi_in_reverb[2])
+
+
+  # Set chorus parameters for the current MIDI-IN channel
+  #   prog : Chorus program
+  #   level: Chorus level
+  #   fback: Chorus feedback
+  #   delay: Chorus delay
+  def set_midi_in_chorus(self, prog=None, level=None, fback=None, delay=None):
+    send = False
+    if not prog is None:
+      self.midi_in_settings[self.midi_in_ch]['chorus'][0] = prog
+      send = True
+
+    if not level is None:
+      self.midi_in_settings[self.midi_in_ch]['chorus'][1] = level
+      send = True
+      
+    if not fback is None:
+      self.midi_in_settings[self.midi_in_ch]['chorus'][2] = fback
+      send = True
+      
+    if not delay is None:
+      self.midi_in_settings[self.midi_in_ch]['chorus'][3] = delay
+      send = True
+
+    midi_in_chorus = self.midi_in_settings[self.midi_in_ch]['chorus']
+    if send:
+      self.midi_obj.set_chorus(self.midi_in_ch, midi_in_chorus[0], midi_in_chorus[1], midi_in_chorus[2], midi_in_chorus[3])
+
+
+  # Set vibrate parameters for the current MIDI-IN channel
+  #   level: Vibrate level
+  #   depth: Vibrate depth
+  #   delay: Vibrate delay
+  def set_midi_in_vibrate(self, rate=None, depth=None, delay=None):
+    send = False
+    if not rate is None:
+      self.midi_in_settings[self.midi_in_ch]['vibrate'][0] = rate
+      send = True
+
+    if not depth is None:
+      self.midi_in_settings[self.midi_in_ch]['vibrate'][1] = depth
+      send = True
+      
+    if not delay is None:
+      self.midi_in_settings[self.midi_in_ch]['vibrate'][2] = delay
+      send = True
+
+    midi_in_vibrate = self.midi_in_settings[self.midi_in_ch]['vibrate']
+    if send:
+      self.midi_obj.set_vibrate(self.midi_in_ch, midi_in_vibrate[0], midi_in_vibrate[1], midi_in_vibrate[2])
+
+################# End of MIDI-IN Player Class Definition #################
+
+
 ###################
 # Sequencer Class
 ###################
@@ -1555,6 +1784,10 @@ class unipico_application_class:
         self.order_queuer = []
 
         self.midi_in_player_controller = False
+
+        self.midi_channel = -1
+        self.sequencer_file = 0
+
         self.sequencer_playing = False
         self.sequencer_pause = False
         self.sequencer_stop = False
@@ -1563,34 +1796,40 @@ class unipico_application_class:
         self.joystick_y = -1
         self.joystick_b = False
         
-        self.MENU_MIN_SAVE = 0
-        self.MENU_MIN_PLAY_MVOL = 1
-        self.MENU_MIN_PLAY_CTRL = 2
-        self.MENU_MIN_LOAD = 3
-        self.MENU_MIN_CH01_REV_PROG = 4
-        self.MENU_MIN_CH01_REV_LEVL = 5
-        self.MENU_MIN_CH01_REV_FDBK = 6
-        self.MENU_MIN_CH01_CHR_PROG = 7
-        self.MENU_MIN_CH01_CHR_LEVL = 8
-        self.MENU_MIN_CH01_CHR_FDBK = 9
-        self.MENU_MIN_CH01_CHR_DELY = 10
-        self.MENU_MIN_CH01_VIB_RATE = 11
-        self.MENU_MIN_CH01_VIB_DEPT = 12
-        self.MENU_MIN_CH01_VIB_DELY = 13
+        self.MENU_SEQ_FILE = 0
+        self.MENU_MIN_SAVE = 1
+        self.MENU_MIN_PLAY_MVOL     = 2
+        self.MENU_MIN_PLAY_CTRL     = 3
+        self.MENU_MIN_MIDI_SET      = 4
+        self.MENU_MIN_LOAD          = 5
+        self.MENU_MIN_CH01_CHN_INST = 6
+        self.MENU_MIN_CH01_REV_PROG = 7
+        self.MENU_MIN_CH01_REV_LEVL = 8
+        self.MENU_MIN_CH01_REV_FDBK = 9
+        self.MENU_MIN_CH01_CHR_PROG = 10
+        self.MENU_MIN_CH01_CHR_LEVL = 11
+        self.MENU_MIN_CH01_CHR_FDBK = 12
+        self.MENU_MIN_CH01_CHR_DELY = 13
+        self.MENU_MIN_CH01_VIB_RATE = 14
+        self.MENU_MIN_CH01_VIB_DEPT = 15
+        self.MENU_MIN_CH01_VIB_DELY = 16
         
         self.menu_change_dir = 0
         self.value_change_dir = 0
         self.VALUE_CHANGE_SENSE_MAX = 15
         self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
-        self.menu_selected = 1
+        self.menu_selected = self.MENU_MIN_MIDI_SET
         self.menu = [
+                [('SEQ:PLAY',    '', None), ('FILE:', '{:03d}', self.get_seq_file)],
                 [('MIN:SAVE',    '', None),              ('OK?:',        '', None)],
                 [('PLAY:', '{:03d}', self.get_midi_set), ('MVOL:', '{:03d}', self.get_master_volume)],
                 [('PLAY:', '{:03d}', self.get_midi_set), ('CTRL:', '{:s}'  , self.get_min_play_ctrl)],
+                [('PLAY:', '{:03d}', self.get_midi_set), ('SET:',  '{:03d}', self.get_midi_set)],
                 [('MIN:LOAD',    '', None),              ('OK?',         '', None)]
             ]
         for ch in list(range(1,17)):
             ch_str = 'CH{:02d}'.format(ch)
+            self.menu.append([(ch_str + ':CHN', '', None), ('INST:', '{:03d}', self.get_chn_inst)])
             self.menu.append([(ch_str + ':REV', '', None), ('PROG:', '{:03d}', self.get_rev_prog)])
             self.menu.append([(ch_str + ':REV', '', None), ('LEVL:', '{:03d}', self.get_rev_levl)])
             self.menu.append([(ch_str + ':REV', '', None), ('FDBK:', '{:03d}', self.get_rev_fdbk)])
@@ -1602,8 +1841,37 @@ class unipico_application_class:
             self.menu.append([(ch_str + ':VIB', '', None), ('DEPT:', '{:03d}', self.get_vib_dept)])
             self.menu.append([(ch_str + ':VIB', '', None), ('DELY:', '{:03d}', self.get_vib_dely)])
 
+    def get_seq_file(self, delta=0):
+        if delta != 0:
+            if delta < 0:
+                delta = -1
+            elif delta > 0:
+                delta = 1
+
+            self.sequencer_file = (self.sequencer_file + delta) % 1000
+
+        return self.sequencer_file
+
     def get_midi_set(self, delta=0):
-        return 0
+        if delta != 0:
+            if delta < 0:
+                delta = -1
+            elif delta > 0:
+                delta = 1
+                
+            set_num = midi_in_player_obj.set_midi_in_set_num()
+            print('MIDI SET DELTA:', set_num, delta)
+            set_num = (set_num + delta) % 1000
+            midi_in_player_obj.set_midi_in_set_num(set_num)
+            set_number = midi_in_player_obj.set_midi_in_set_num()
+
+            midi_in_set = midi_in_player_obj.read_midi_in_settings(set_number)
+            if not midi_in_set is None:
+                print('LOAD MIDI-IN SET:', set_number, midi_in_set)
+                midi_in_player_obj.set_midi_in_setting(midi_in_set)
+                midi_in_player_obj.send_all_midi_in_settings()
+
+        return midi_in_player_obj.set_midi_in_set_num()
     
     def get_master_volume(self, delta=0):
         vol = midi_obj.get_master_volume() + delta
@@ -1620,6 +1888,15 @@ class unipico_application_class:
         if delta != 0:
             self.midi_in_player_controller = not self.midi_in_player_controller
         return 'MOD' if self.midi_in_player_controller else '---'
+    
+    def get_chn_inst(self, delta=0):
+        if delta != 0:
+            prog = midi_in_player_obj.get_midi_in_setting(self.midi_channel, 'program')
+            prog = (prog + delta) % 128
+            midi_in_player_obj.set_midi_in_setting3(self.midi_channel, 'program', prog)
+            midi_in_player_obj.send_midi_in_settings(self.midi_channel)
+            
+        return midi_in_player_obj.get_midi_in_setting(self.midi_channel, 'program')
     
     def get_rev_prog(self, delta=0):
         return 11
@@ -1691,10 +1968,16 @@ class unipico_application_class:
         menu_item  = self.menu[self.menu_selected][0]
         menu_value = self.menu[self.menu_selected][1]
         
+        # MIDI channel related parameters
+        if self.menu_selected >= self.MENU_MIN_CH01_CHN_INST:
+            self.midi_channel = int((self.menu_selected - self.MENU_MIN_CH01_CHN_INST) / 11)
+        else:
+            self.midi_channel = -1
+    
         if menu_item[2] is None:
             show_str = menu_item[0]
         else:
-            show_str = menu_item[0] + menu_item[1].format(menu_item[2](delta))
+            show_str = menu_item[0] + menu_item[1].format(menu_item[2]())
         display.setText(show_str, 0, 0)
         
         if menu_value[2] is None:
@@ -1733,6 +2016,19 @@ class unipico_application_class:
             if self.menu_selected == self.MENU_MIN_PLAY_CTRL:
                 self.midi_in_player_controller = not self.midi_in_player_controller
                 self.show_menu()
+
+            elif self.menu_selected == self.MENU_SEQ_FILE:
+                # Stop trigger
+                if self.sequencer_playing:
+                    self.sequencer_stop = True
+                    self.sequencer_pause = False
+                    utime.sleep_ms(1000)
+                
+                # Play
+                else:
+                    self.sequencer_playing = True
+                    self.make_order('play sequencer', (self.sequencer_file,))
+                    utime.sleep_ms(1000)
                 
             self.joystick_b = True
 
@@ -1743,12 +2039,11 @@ class unipico_application_class:
         if self.joystick_y != joy_y:
             # Opertion: MIDI-IN PLAYER CONTROLLER
             if self.midi_in_player_controller:
-                print('MASTRE VOLUME:', int(joy_y / 255 * 127))
+#                print('MASTRE VOLUME:', int(joy_y / 255 * 127))
                 midi_obj.set_master_volume(int(joy_y / 255 * 127))
                 
             # Menu change
             else:
-                print('MENU CHANGE:', joy_y, self.joystick_y)
                 affected = False
                 if joy_y <= 50 and self.menu_change_dir != -1:
                     self.menu_selected = (self.menu_selected - 1) % len(self.menu)
@@ -1765,6 +2060,7 @@ class unipico_application_class:
 
                 # Change menu
                 if affected:
+                    print('MENU CHANGE:', joy_y, self.joystick_y)
                     self.show_menu()
                     
             self.joystick_y = joy_y
@@ -1784,7 +2080,6 @@ class unipico_application_class:
                     
             # Value change
             else:
-                print('VALUE CHANGE:', joy_x)
                 affected = False
                 if joy_x <= 50:
                     if self.value_change_dir != -1:
@@ -1811,11 +2106,12 @@ class unipico_application_class:
                             self.value_change_dir = 0
                 
                 elif 50 < joy_x and joy_x < 205:
-                    self.value_change_dir = 0
+#                    self.value_change_dir = 0
                     self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
 
                 # Change menu
                 if affected:
+                    print('VALUE CHANGE:', joy_x, delta)
                     self.show_menu(delta)
 
             self.joystick_x = joy_x
@@ -1841,12 +2137,6 @@ class unipico_application_class:
         # PICO settings
         led = Pin("LED", Pin.OUT, value=0)
         led.value(0)
-    
-        # Play test data
-        score = [(60,), (64,), (67,), (60, 64, 67)]
-        steps = len(score)
-        play_at = 0
-        effect = -1
         
         # Play UnitMIDI with flashing a LED on PICO board
         self.show_menu()
@@ -1856,48 +2146,8 @@ class unipico_application_class:
             if not order is None:
                 if order[0] == 'play sequencer':
                     self.order_play_sequencer(order[1])
-                
-            # Effector test
-            if play_at == 0:
-                effect = (effect + 1) % 6
-                if effect == 1:
-                    print('REVERB')
-                    midi_obj.set_reverb(0, 3, 120, 80)
-                elif effect == 3:
-                    print('CHORUS')
-                    midi_obj.set_chorus(0, 3, 120, 120, 120)
-                elif effect == 5:
-                    print('VIBRATE')
-                    midi_obj.set_vibrate(0, 60, 120, 0)
-                else:
-                    print('NO EFFECT')
-                    midi_obj.set_reverb(0, 0, 0, 0)
-                    midi_obj.set_chorus(0, 0, 0, 0, 0)
-                    midi_obj.set_vibrate(0, 0, 0, 0)
 
-            # Instrument test
-            gm_program_no = random.randint(0,127)
-            gm_program_name = midi_obj.get_gm_program_name(midi_obj.gmbank(), gm_program_no)
-            print('INSTRUMENT:', gm_program_name)
-            midi_obj.set_instrument(0, 0, gm_program_no)
-
-#            display.setCursor(0, 0)
-#            display.dispText(gm_program_name)
-            utime.sleep_ms(2000)
-
-#            display.clearScreen()
-#            display.setText('P:', 0, 0)
-#            display.setText(gm_program_name, 2, 0)
-#            display.setText(gm_program_name, 0, 1)
-#            display.show()
-            utime.sleep_ms(2000)
-
-#            display.clearScreen()
-#            display.show()
-            utime.sleep_ms(1000)
-            
-            # Next notes on the score
-            play_at = (play_at + 1) % steps
+            utime.sleep_ms(200)
             
 ################# End of Application class #################
 
@@ -1926,6 +2176,10 @@ if __name__ == '__main__':
 
         # External MIDI-IN instrument
         midi_in_instrument = midi_in_instrument_class(device_manager_obj, midi_obj)
+
+        # MIDI-IN Player object
+        midi_in_player_obj = midi_in_player_class(midi_obj, sdcard_obj)
+        midi_in_player_obj.set_midi_in_program(0)
 
         # Sequencer object
         sequencer_obj = sequencer_class(midi_obj, sdcard_obj)
