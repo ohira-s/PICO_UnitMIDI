@@ -5,6 +5,7 @@ from machine import Pin, UART, I2C
 import time, utime, os, json
 import random
 import _thread
+from micropython import const
 
 # Class objects
 sdcard_obj         = None   # SD Card
@@ -163,6 +164,104 @@ class sdcard_class:
 ################# End of SD Card Class Definition #################
 
 
+########################
+### LCD AQM0802A class
+########################
+class aqm0802a_lcd_class:
+    def __init__(self, address=0x3e, unit=1, scl_pin=7, sda_pin=6):
+        self._ST7032  = address
+        self._SETTING = const(0x00)
+        self._DISPLAY = const(0x40)
+        
+        self.screen = ['        ', '        ']
+        
+        self.lcd = I2C(unit, scl=Pin(scl_pin), sda=Pin(sda_pin))
+        device_list = self.lcd.scan()
+        print('I2C DEVICES:', unit, device_list)
+
+        orders = [b'\x38', b'\x39', b'\x14', b'\x73', b'\x56', b'\x6C',
+                  b'\x38', b'\x0C', b'\x01']
+        utime.sleep_ms(40)
+        for order in orders[:6]:
+            self.lcd.writeto_mem(self._ST7032, self._SETTING, order)
+            utime.sleep_ms(1)
+        utime.sleep_ms(200)
+        for order in orders[6:]:
+            self.lcd.writeto_mem(self._ST7032, self._SETTING, order)
+            utime.sleep_ms(1)
+        utime.sleep_ms(1)
+
+    def _writeCMD(self, cmd):
+        buf = bytearray([self._SETTING, cmd])
+        self.lcd.writeto(self._ST7032, buf)
+
+    def clear(self):
+        buf = bytearray([self._SETTING, 0x01])
+        self.lcd.writeto(self._ST7032, buf)
+        utime.sleep_ms(1)
+
+    def setContrast(self, contrast):
+        if contrast < 0:
+            contrast = 0
+        if contrast > 0x0f:
+            contrast = 0x0f
+        self._writeCMD(0x39)
+        self._writeCMD(0x70 + contrast)
+
+    def home(self):
+        self._writeCMD(0x02)
+        utime.sleep_ms(10)
+
+    def setCursor(self, x, y):
+        if x < 0: x = 0
+        if y < 0: y = 0
+        addr = y * 0x40 + x
+        self._writeCMD(0x80 + addr)
+        utime.sleep_ms(2)
+
+    # Show text immediately
+    def clearScreen(self):
+        self.screen = ['        ', '        ']
+        
+    # Show text immediately
+    def dispText(self, str_show, x=None, y=None):
+        if not x is None and not x is None:
+            self.setCursor(x, y)
+
+        for ch in str_show:
+            self.lcd.writeto_mem(self._ST7032, self._DISPLAY, ch.encode())
+
+    # Set text on the screen buffer
+    def setText(self, str_show, x=None, y=None):
+        if x is None:
+            x = 0
+            
+        if y is None:
+            y = 0
+
+        elif x < 0 or x > 7 or y < 0 or y > 1:
+            return
+        
+        str_show = str_show[: (8 - x)]
+        line = list(self.screen[y])
+        for ch in str_show:
+            line[x] = ch
+            x = x + 1
+            
+        self.screen[y] = ''.join(line)
+
+    # Show the screen buffer
+    def show(self):
+        self.setCursor(0, 0)
+        for row_str in self.screen:
+            for ch in row_str:
+                self.lcd.writeto_mem(self._ST7032, self._DISPLAY, ch.encode())
+
+            self.setCursor(0, 1)
+
+################# End of LCD AQM0802A Class Definition #################
+
+
 #####################
 ### Unit-MIDI class
 #####################
@@ -253,7 +352,7 @@ class midi_class:
         self.USE_GMBANK = 0                              # GM bank number (normally 0, option is 127)
         #self.USE_GMBANK = 127
         self.GM_FILE_PATH = '/SYNTH/MIDIFILE/'       # GM program names list file path
- 
+
     # Setup
     def setup(self, uart = None):
         if not uart is None:
@@ -1455,6 +1554,7 @@ class unipico_application_class:
         self.lock = False
         self.order_queuer = []
 
+        self.midi_in_player_controller = False
         self.sequencer_playing = False
         self.sequencer_pause = False
         self.sequencer_stop = False
@@ -1462,7 +1562,95 @@ class unipico_application_class:
         self.joystick_x = -1
         self.joystick_y = -1
         self.joystick_b = False
+        
+        self.MENU_MIN_SAVE = 0
+        self.MENU_MIN_PLAY_MVOL = 1
+        self.MENU_MIN_PLAY_CTRL = 2
+        self.MENU_MIN_LOAD = 3
+        self.MENU_MIN_CH01_REV_PROG = 4
+        self.MENU_MIN_CH01_REV_LEVL = 5
+        self.MENU_MIN_CH01_REV_FDBK = 6
+        self.MENU_MIN_CH01_CHR_PROG = 7
+        self.MENU_MIN_CH01_CHR_LEVL = 8
+        self.MENU_MIN_CH01_CHR_FDBK = 9
+        self.MENU_MIN_CH01_CHR_DELY = 10
+        self.MENU_MIN_CH01_VIB_RATE = 11
+        self.MENU_MIN_CH01_VIB_DEPT = 12
+        self.MENU_MIN_CH01_VIB_DELY = 13
+        
+        self.menu_change_dir = 0
+        self.value_change_dir = 0
+        self.VALUE_CHANGE_SENSE_MAX = 15
+        self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
+        self.menu_selected = 1
+        self.menu = [
+                [('MIN:SAVE',    '', None),              ('OK?:',        '', None)],
+                [('PLAY:', '{:03d}', self.get_midi_set), ('MVOL:', '{:03d}', self.get_master_volume)],
+                [('PLAY:', '{:03d}', self.get_midi_set), ('CTRL:', '{:s}'  , self.get_min_play_ctrl)],
+                [('MIN:LOAD',    '', None),              ('OK?',         '', None)]
+            ]
+        for ch in list(range(1,17)):
+            ch_str = 'CH{:02d}'.format(ch)
+            self.menu.append([(ch_str + ':REV', '', None), ('PROG:', '{:03d}', self.get_rev_prog)])
+            self.menu.append([(ch_str + ':REV', '', None), ('LEVL:', '{:03d}', self.get_rev_levl)])
+            self.menu.append([(ch_str + ':REV', '', None), ('FDBK:', '{:03d}', self.get_rev_fdbk)])
+            self.menu.append([(ch_str + ':CHR', '', None), ('PROG:', '{:03d}', self.get_chr_prog)])
+            self.menu.append([(ch_str + ':CHR', '', None), ('LEVL:', '{:03d}', self.get_chr_levl)])
+            self.menu.append([(ch_str + ':CHR', '', None), ('FDBK:', '{:03d}', self.get_chr_fdbk)])
+            self.menu.append([(ch_str + ':CHR', '', None), ('DELY:', '{:03d}', self.get_chr_dely)])
+            self.menu.append([(ch_str + ':VIB', '', None), ('RATE:', '{:03d}', self.get_vib_rate)])
+            self.menu.append([(ch_str + ':VIB', '', None), ('DEPT:', '{:03d}', self.get_vib_dept)])
+            self.menu.append([(ch_str + ':VIB', '', None), ('DELY:', '{:03d}', self.get_vib_dely)])
 
+    def get_midi_set(self, delta=0):
+        return 0
+    
+    def get_master_volume(self, delta=0):
+        vol = midi_obj.get_master_volume() + delta
+        if vol < 0:
+            vol = 0
+            
+        if vol > 127:
+            vol = 127
+            
+        midi_obj.set_master_volume(vol)
+        return vol
+    
+    def get_min_play_ctrl(self, delta=0):
+        if delta != 0:
+            self.midi_in_player_controller = not self.midi_in_player_controller
+        return 'MOD' if self.midi_in_player_controller else '---'
+    
+    def get_rev_prog(self, delta=0):
+        return 11
+    
+    def get_rev_levl(self, delta=0):
+        return 12
+    
+    def get_rev_fdbk(self, delta=0):
+        return 13
+    
+    def get_chr_prog(self, delta=0):
+        return 21
+    
+    def get_chr_levl(self, delta=0):
+        return 22
+    
+    def get_chr_fdbk(self, delta=0):
+        return 23
+    
+    def get_chr_dely(self, delta=0):
+        return 24
+    
+    def get_vib_rate(self, delta=0):
+        return 31
+    
+    def get_vib_dept(self, delta=0):
+        return 32
+    
+    def get_vib_dely(self, delta=0):
+        return 33
+    
     # Make an order to the application, orders come from other functions including thread process.
     #   order: A string text of the order
     #   args : Arguments tuple
@@ -1497,42 +1685,138 @@ class unipico_application_class:
     def sequencer_pause_to_stop(self):
         return 1
 
+    # Show the current menu on the LCD
+    def show_menu(self, delta=0):
+        display.clearScreen()
+        menu_item  = self.menu[self.menu_selected][0]
+        menu_value = self.menu[self.menu_selected][1]
+        
+        if menu_item[2] is None:
+            show_str = menu_item[0]
+        else:
+            show_str = menu_item[0] + menu_item[1].format(menu_item[2](delta))
+        display.setText(show_str, 0, 0)
+        
+        if menu_value[2] is None:
+            show_str = menu_value[0]
+        else:
+            show_str = menu_value[0] + menu_value[1].format(menu_value[2](delta))
+        display.setText(show_str, 0, 1)
+
+        display.show()
+
     # Joy Stick delegateion of device controller
     def device_joystick_controller(self, joy_x, joy_y, joy_b):
-        # Sequencer player
-        if joy_b == 1:
-            # Stop trigger
-            if self.sequencer_playing:
-                self.sequencer_pause = True
-            
-            # Play
-            else:
-                self.sequencer_playing = True
-                self.make_order('play sequencer', (977,))
-                utime.sleep_ms(1000)
-        
-        # Stop playing
-        elif self.sequencer_pause:
-            self.sequencer_stop =True
-            self.sequencer_pause = False
-            utime.sleep_ms(1000)
+        # Opertion: MIDI-IN PLAYER CONTROLLER
+#        if self.midi_in_player_controller:
+            # Sequencer player
+#            if joy_b == 1:
+#                # Stop trigger
+#                if self.sequencer_playing:
+#                    self.sequencer_pause = True
+#                
+                # Play
+#                else:
+#                    self.sequencer_playing = True
+#                    self.make_order('play sequencer', (977,))
+#                    utime.sleep_ms(1000)
+#               
+            # Stop playing
+#            elif self.sequencer_pause:
+#                self.sequencer_stop =True
+#                self.sequencer_pause = False
+#                utime.sleep_ms(1000)
+                
+        # Joystick button clicked
+        if joy_b == True and self.joystick_b == False:
+            # Menu: MIDI-IN PLAYER CONTROLLER
+            if self.menu_selected == self.MENU_MIN_PLAY_CTRL:
+                self.midi_in_player_controller = not self.midi_in_player_controller
+                self.show_menu()
+                
+            self.joystick_b = True
 
-        # Master volume
+        else:
+            self.joystick_b = False
+
+        # Joystick-Y moved
         if self.joystick_y != joy_y:
-#            print('MASTRE VOLUME:', int(joy_y / 255 * 127))
-            midi_obj.set_master_volume(int(joy_y / 255 * 127))
+            # Opertion: MIDI-IN PLAYER CONTROLLER
+            if self.midi_in_player_controller:
+                print('MASTRE VOLUME:', int(joy_y / 255 * 127))
+                midi_obj.set_master_volume(int(joy_y / 255 * 127))
+                
+            # Menu change
+            else:
+                print('MENU CHANGE:', joy_y, self.joystick_y)
+                affected = False
+                if joy_y <= 50 and self.menu_change_dir != -1:
+                    self.menu_selected = (self.menu_selected - 1) % len(self.menu)
+                    self.menu_change_dir = -1
+                    affected = True
+                    
+                elif joy_y >= 205 and self.menu_change_dir != 1:
+                    self.menu_selected = (self.menu_selected + 1) % len(self.menu)
+                    self.menu_change_dir = 1
+                    affected = True
+                
+                elif 50 < joy_y and joy_y < 205:
+                    self.menu_change_dir = 0
+
+                # Change menu
+                if affected:
+                    self.show_menu()
+                    
             self.joystick_y = joy_y
 
-        # Pitch Bend
+        # Joystick-X moved
         if self.joystick_x != joy_x:
-            if joy_x <= 100:
-#                print('PITCH BEND -:', joy_x)
-                midi_obj.set_pitch_bend(0, 0x1fff - int(0x1fff * (100 - joy_x) / 100))
-            elif joy_x >= 155:
-#                print('PITCH BEND +:', joy_x)
-                midi_obj.set_pitch_bend(0, 0x1fff + int(0x1fff * (joy_x - 155) / 100))
+            # Opertion: MIDI-IN PLAYER CONTROLLER
+            if self.midi_in_player_controller:
+                if joy_x <= 100:
+#                    print('PITCH BEND -:', joy_x)
+                    midi_obj.set_pitch_bend(0, 0x1fff - int(0x1fff * (100 - joy_x) / 100))
+                elif joy_x >= 155:
+#                    print('PITCH BEND +:', joy_x)
+                    midi_obj.set_pitch_bend(0, 0x1fff + int(0x1fff * (joy_x - 155) / 100))
+                else:
+                    midi_obj.set_pitch_bend(0, 0x1fff)
+                    
+            # Value change
             else:
-                midi_obj.set_pitch_bend(0, 0x1fff)
+                print('VALUE CHANGE:', joy_x)
+                affected = False
+                if joy_x <= 50:
+                    if self.value_change_dir != -1:
+                        delta = min(int((50 - joy_x) / -10), -1)
+                        self.value_change_dir = -1
+                        self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
+                        affected = True
+                    else:
+                        self.value_change_sense = self.value_change_sense - 1
+                        if self.value_change_sense == 0:
+                            self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
+                            self.value_change_dir = 0
+                            
+                elif joy_x >= 205:
+                    if self.value_change_dir != 1:
+                        delta = max(int((255 - joy_x) / 10), 1)
+                        self.value_change_dir = 1
+                        self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
+                        affected = True
+                    else:
+                        self.value_change_sense = self.value_change_sense - 1
+                        if self.value_change_sense == 0:
+                            self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
+                            self.value_change_dir = 0
+                
+                elif 50 < joy_x and joy_x < 205:
+                    self.value_change_dir = 0
+                    self.value_change_sense = self.VALUE_CHANGE_SENSE_MAX
+
+                # Change menu
+                if affected:
+                    self.show_menu(delta)
 
             self.joystick_x = joy_x
 
@@ -1556,7 +1840,8 @@ class unipico_application_class:
     def app_loop(self):     
         # PICO settings
         led = Pin("LED", Pin.OUT, value=0)
-
+        led.value(0)
+    
         # Play test data
         score = [(60,), (64,), (67,), (60, 64, 67)]
         steps = len(score)
@@ -1564,6 +1849,7 @@ class unipico_application_class:
         effect = -1
         
         # Play UnitMIDI with flashing a LED on PICO board
+        self.show_menu()
         while True:
             # Order to the application
             order = self.get_order()
@@ -1594,19 +1880,21 @@ class unipico_application_class:
             gm_program_name = midi_obj.get_gm_program_name(midi_obj.gmbank(), gm_program_no)
             print('INSTRUMENT:', gm_program_name)
             midi_obj.set_instrument(0, 0, gm_program_no)
-            
-            utime.sleep_ms(5000)
-            
-            # Note-on
-#            notes = score[play_at]
-#            led.value(1)
-#            notes_on(midi_obj, notes)
-#            utime.sleep_ms(1000)
 
-            # Note-off
-#            led.value(0)
-#            notes_off(midi_obj, notes)
-#            utime.sleep_ms(500)
+#            display.setCursor(0, 0)
+#            display.dispText(gm_program_name)
+            utime.sleep_ms(2000)
+
+#            display.clearScreen()
+#            display.setText('P:', 0, 0)
+#            display.setText(gm_program_name, 2, 0)
+#            display.setText(gm_program_name, 0, 1)
+#            display.show()
+            utime.sleep_ms(2000)
+
+#            display.clearScreen()
+#            display.show()
+            utime.sleep_ms(1000)
             
             # Next notes on the score
             play_at = (play_at + 1) % steps
@@ -1627,6 +1915,7 @@ if __name__ == '__main__':
         device_manager_obj = device_manager_class()
         
         # Joy Stick
+        # __init__(self, device_manager, address=82, unit=0, scl_pin=9, sda_pin=8, frequency=400000):
         joystick_obj = device_joystick_class(device_manager_obj)
         joystick_obj.delegate(application.device_joystick_controller)
         
@@ -1645,6 +1934,11 @@ if __name__ == '__main__':
         thread_manager_obj = thread_manager_class()
         thread_manager_obj.start(device_manager_obj.device_control_thread, (thread_manager_obj, 5,))
 
+        # LCD
+        display = aqm0802a_lcd_class(62, 1, 7, 6)
+        display.setContrast(0)
+        display.clear()
+        
         # Application loop
         application.app_loop()
         
