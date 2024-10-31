@@ -1730,18 +1730,6 @@ class sequencer_class():
 ################# End of Sequencer Class Definition #################
 
 
-def notes_on(midi_obj, notes):
-    for note in notes:
-        print("NOTE ON :", midi_obj.key_name(note))
-        midi_obj.set_note_on(0, note, 127)
-
-
-def notes_off(midi_obj, notes):
-    for note in notes:
-        print("NOTE ON :", midi_obj.key_name(note))
-        midi_obj.set_note_off(0, note)
-
-
 ######################
 ### Joy Stick Device
 ######################
@@ -1796,6 +1784,7 @@ class unipico_application_class:
         self.is_in_menu_task = False
         self.midi_in_player_controller = False
         self.midi_in_save_file = 0
+        self.disp_inst_as_number = True
 
         self.midi_channel = -1
         self.sequencer_file = 0
@@ -1824,7 +1813,7 @@ class unipico_application_class:
         self.MENU_MIN_CH01_VIB_RATE = 13
         self.MENU_MIN_CH01_VIB_DEPT = 14
         self.MENU_MIN_CH01_VIB_DELY = 15
-        
+
         self.menu_change_dir = 0
         self.value_change_dir = 0
         self.BUTTON_SENSE_MAX = 15
@@ -1841,7 +1830,7 @@ class unipico_application_class:
             ]
         for ch in list(range(1,17)):
             ch_str = 'CH{:02d}'.format(ch)
-            self.menu.append([(ch_str + ':CHN', '', None), ('INST:', '{:03d}', self.get_chn_inst)])
+            self.menu.append([(ch_str + ':INS', '', None), ('',      '{:s}',   self.get_chn_inst)])
             self.menu.append([(ch_str + ':REV', '', None), ('PROG:', '{:03d}', self.get_rev_prog)])
             self.menu.append([(ch_str + ':REV', '', None), ('LEVL:', '{:03d}', self.get_rev_levl)])
             self.menu.append([(ch_str + ':REV', '', None), ('FDBK:', '{:03d}', self.get_rev_fdbk)])
@@ -1914,16 +1903,22 @@ class unipico_application_class:
         if delta != 0:
             self.midi_in_player_controller = not self.midi_in_player_controller
         return 'MOD' if self.midi_in_player_controller else '---'
-    
+
     def get_chn_inst(self, delta=0):
         if delta != 0:
             prog = midi_in_player_obj.get_midi_in_setting(self.midi_channel, 'program')
             prog = (prog + delta) % 128
             midi_in_player_obj.set_midi_in_setting3(self.midi_channel, 'program', prog)
             midi_in_player_obj.send_midi_in_settings(self.midi_channel)
-            
-        return midi_in_player_obj.get_midi_in_setting(self.midi_channel, 'program')
-    
+
+        prog = midi_in_player_obj.get_midi_in_setting(self.midi_channel, 'program')
+        if self.disp_inst_as_number:
+            return '#{:03d}'.format(prog)
+
+        pname = midi_obj.get_gm_program_name(midi_obj.gmbank(), prog)
+        return pname[:8]
+
+
     def get_rev_prog(self, delta=0):
         if delta != 0:
             effector = midi_in_player_obj.get_midi_in_setting(self.midi_channel, 'reverb')
@@ -2083,7 +2078,7 @@ class unipico_application_class:
         if menu_item[2] is None:
             show_str = menu_item[0]
         else:
-            show_str = menu_item[0] + menu_item[1].format(menu_item[2]())
+            show_str = menu_item[0] + menu_item[1].format(menu_item[2](delta))
         display.setText(show_str, 0, 0)
         
         if menu_value[2] is None:
@@ -2142,6 +2137,11 @@ class unipico_application_class:
                 print('SAVED')
                 display.setText('SAV', 0, 1)
                 display.show()
+            
+            # Instrument change (every channels)
+            elif self.menu_selected >= self.MENU_MIN_CH01_CHN_INST and (self.menu_selected - self.MENU_MIN_CH01_CHN_INST) % 11 == 0:
+                self.disp_inst_as_number = not self.disp_inst_as_number
+                self.show_menu()
                 
             self.joystick_b = True
 
