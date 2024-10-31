@@ -2,6 +2,7 @@
 # Unit-MIDI synthesizer with Raspberry Pi PICO
 # FUNCTION:
 #   MIDI-IN Player
+#   Realtime Recording and Player
 #   Sequencer File Player (Editor is NOT AVAILABLE)
 # UI:
 #   Joystick for M5Stack CORE2
@@ -1768,8 +1769,56 @@ class midi_in_instrument_class:
         self.midi_obj = midi_obj
         device_manager.add_device(self)
     
+        self.midi_recording = 'STOP'
+        self.midi_tape = []
+        
+    def set_midi_recording(self, record=None):
+        if not record is None:
+            self.midi_recording = record
+            if self.midi_recording == 'RECORD':
+                self.midi_tape = []
+                self.midi_rec_time = -1
+        
+        return self.midi_recording
+
+    def get_midi_tape(self):
+        return self.midi_tape
+    
+    def play_tape(self):
+        self.set_midi_recording('PLAY')
+        tick_prev = None
+        for tick, midi_data in self.get_midi_tape():
+            joystick_obj.controller()							# Watch STOP button
+            if self.set_midi_recording() == 'STOP':
+                break
+            
+            if tick_prev is None:
+                midi_obj.midi_out(midi_data)
+                tick_prev = tick
+            else:
+                self.midi_obj.midi_in_out()
+                tick_wait  = time.ticks_diff(tick, tick_prev)
+                tick_prev  = tick
+                tick_start = time.ticks_us()
+                tick_now   = time.ticks_us()
+                while time.ticks_diff(tick_now, tick_start) < tick_wait:
+                    utime.sleep_ms(50)
+                    self.midi_obj.midi_in_out()
+                    joystick_obj.controller()					# Watch STOP button
+                    tick_now = time.ticks_us()
+                    
+                midi_obj.midi_out(midi_data)
+                
+        self.set_midi_recording('STOP')
+ 
     def controller(self):
-        self.midi_obj.midi_in_out()
+        if self.midi_recording == 'RECORD':
+            midi_data = self.midi_obj.midi_in()
+            if not midi_data is None:
+                self.midi_obj.midi_out(midi_data)
+                self.midi_tape.append((time.ticks_us(), midi_data))
+        else:
+            self.midi_obj.midi_in_out()
 
 
 #######################
@@ -1797,22 +1846,24 @@ class unipico_application_class:
         self.joystick_y = -1
         self.joystick_b = False
         
-        self.MENU_SEQ_FILE = 0
-        self.MENU_MIN_SAVE = 1
-        self.MENU_MIN_PLAY_MVOL     = 2
-        self.MENU_MIN_PLAY_CTRL     = 3
-        self.MENU_MIN_MIDI_SET      = 4
-        self.MENU_MIN_CH01_CHN_INST = 5
-        self.MENU_MIN_CH01_REV_PROG = 6
-        self.MENU_MIN_CH01_REV_LEVL = 7
-        self.MENU_MIN_CH01_REV_FDBK = 8
-        self.MENU_MIN_CH01_CHR_PROG = 9
-        self.MENU_MIN_CH01_CHR_LEVL = 10
-        self.MENU_MIN_CH01_CHR_FDBK = 11
-        self.MENU_MIN_CH01_CHR_DELY = 12
-        self.MENU_MIN_CH01_VIB_RATE = 13
-        self.MENU_MIN_CH01_VIB_DEPT = 14
-        self.MENU_MIN_CH01_VIB_DELY = 15
+        self.MENU_SEQ_FILE          = 0
+        self.MENU_TAPE_PLAY         = 1
+        self.MENU_TAPE_RECORD       = 2
+        self.MENU_MIN_SAVE          = 3
+        self.MENU_MIN_PLAY_MVOL     = 4
+        self.MENU_MIN_PLAY_CTRL     = 5
+        self.MENU_MIN_MIDI_SET      = 6
+        self.MENU_MIN_CH01_CHN_INST = 7
+        self.MENU_MIN_CH01_REV_PROG = 8
+        self.MENU_MIN_CH01_REV_LEVL = 9
+        self.MENU_MIN_CH01_REV_FDBK = 10
+        self.MENU_MIN_CH01_CHR_PROG = 11
+        self.MENU_MIN_CH01_CHR_LEVL = 12
+        self.MENU_MIN_CH01_CHR_FDBK = 13
+        self.MENU_MIN_CH01_CHR_DELY = 14
+        self.MENU_MIN_CH01_VIB_RATE = 15
+        self.MENU_MIN_CH01_VIB_DEPT = 16
+        self.MENU_MIN_CH01_VIB_DELY = 17
 
         self.menu_change_dir = 0
         self.value_change_dir = 0
@@ -1823,6 +1874,8 @@ class unipico_application_class:
         self.menu_selected = self.MENU_MIN_MIDI_SET
         self.menu = [
                 [('SEQ:PLAY',    '', None),              ('FILE:', '{:03d}', self.get_seq_file)],
+                [('TAPE:PLY',    '', None),              ('',      '{:s}',   self.get_tape_mode)],
+                [('TAPE:REC',    '', None),              ('',      '{:s}',   self.get_tape_mode)],
                 [('MIN:SAVE',    '', None),              ('SET:',  '{:03d}', self.save_midi_set)],
                 [('PLAY:', '{:03d}', self.get_midi_set), ('MVOL:', '{:03d}', self.get_master_volume)],
                 [('PLAY:', '{:03d}', self.get_midi_set), ('CTRL:', '{:s}'  , self.get_min_play_ctrl)],
@@ -1860,6 +1913,9 @@ class unipico_application_class:
 
         return self.sequencer_file
     
+    def get_tape_mode(self,delta=0):
+        return midi_in_instrument.set_midi_recording()
+        
     def save_midi_set(self, delta=0):
         if delta != 0:        
             self.midi_in_save_file = (self.midi_in_save_file + delta) % 1000
@@ -2092,9 +2148,9 @@ class unipico_application_class:
     # Joy Stick delegateion of device controller
     def device_joystick_controller(self, joy_x, joy_y, joy_b):
         # The following task is working, ignore new event.
-        if self.is_in_menu_task:
+        if self.menu_selected != self.MENU_TAPE_PLAY and self.is_in_menu_task:
             return
-
+            
         # Start menu task
         self.is_in_menu_task = True
 
@@ -2137,12 +2193,40 @@ class unipico_application_class:
                 print('SAVED')
                 display.setText('SAV', 0, 1)
                 display.show()
+
+            # Tape recording
+            elif self.menu_selected == self.MENU_TAPE_RECORD:
+                mode = midi_in_instrument.set_midi_recording()
+                if mode == 'RECORD':
+                    midi_in_instrument.set_midi_recording('STOP')
+                elif mode == 'STOP':
+                    midi_in_instrument.set_midi_recording('RECORD')
+
+                self.show_menu()
+
+            # Tape playing
+            elif self.menu_selected == self.MENU_TAPE_PLAY:
+                mode = midi_in_instrument.set_midi_recording()
+                if mode == 'RECORD':
+                    midi_in_instrument.set_midi_recording('STOP')
+        
+                mode = midi_in_instrument.set_midi_recording()
+                if mode == 'STOP':
+                    midi_in_instrument.set_midi_recording('PLAY')
+                    self.show_menu()
+                    self.joystick_b = False
+                    midi_in_instrument.play_tape()
+                
+                elif mode == 'PLAY':
+                    midi_in_instrument.set_midi_recording('STOP')
+        
+                self.show_menu()
             
             # Instrument change (every channels)
             elif self.menu_selected >= self.MENU_MIN_CH01_CHN_INST and (self.menu_selected - self.MENU_MIN_CH01_CHN_INST) % 11 == 0:
                 self.disp_inst_as_number = not self.disp_inst_as_number
                 self.show_menu()
-                
+
             self.joystick_b = True
 
         else:
@@ -2237,7 +2321,7 @@ class unipico_application_class:
         self.sequencer_playing = True
         self.sequencer_pause = False
         self.sequencer_stop = False
-        sequencer_obj.sequencer_load_file(sequencer_obj.set_sequencer_file_path(), 997)
+        sequencer_obj.sequencer_load_file(sequencer_obj.set_sequencer_file_path(), file_num[0])
         sequencer_obj.send_all_sequencer_settings()
         sequencer_obj.pre_play_sequencer()
         sequencer_obj.play_sequencer(self.sequencer_pause_or_stop, self.sequencer_pause_to_stop, None, None)
@@ -2261,6 +2345,7 @@ class unipico_application_class:
             order = self.get_order()
             if not order is None:
                 if order[0] == 'play sequencer':
+                    print('SEQ ORDER[1]:', order[1])
                     self.order_play_sequencer(order[1])
 
             utime.sleep_ms(200)
@@ -2310,10 +2395,11 @@ if __name__ == '__main__':
         
         # MIDI default setting
         application.set_default()
-
+        
         # Application loop
         application.app_loop()
-        
+
+
     except Exception as e:
         print('Catch exception at main loop:', e)
         
