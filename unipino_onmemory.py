@@ -18,9 +18,6 @@ import random
 import _thread
 from micropython import const
 
-from machine import SPI
-import sdcard
-
 # Class objects
 sdcard_obj         = None   # SD Card
 device_manager_obj = None   # Device manager
@@ -108,80 +105,72 @@ class thread_manager_class():
 
 ###################
 ### SD card class
+###   Use internal file system in PICO.
 ###################
 class sdcard_class:
-  # Constructor
-  def __init__(self):
-    self.file_opened = None
-
-  # Initialize SD Card device
-  def setup(self, spi_unit=0, sck_pin=18, mosi_pin=19, miso_pin=16, cs_pin=17):
-    print('SD CARD INIT.')
-    mf = None
-    spi = SPI(spi_unit, sck=Pin(sck_pin), mosi=Pin(mosi_pin), miso=Pin(miso_pin))	# SPI0: SCK, TX, RX
-    sd = sdcard.SDCard(spi, Pin(cs_pin, Pin.OUT))	# CS
-    os.mount(sd, '/SD')
-#    fp = open('/SD/SYNTH/MIDIFILE/LIST.TXT', 'r')
-    fp = open('/SD/SYNTH/MIDIUNIT/MIDISET000.json', 'r')
-    print(fp.read())
-    fp.close()
-    print('SD CARD INIT done.')
-
-  # Opened file
-  def file_opened(self):
-    return self.file_opened
-
-  # File open, needs to close the file
-  def file_open(self, path, fname, mode = 'r'):
-    try:
-      if not self.file_opened is None:
-        self.file_opened.close()
+    # Constructor
+    def __init__(self):
         self.file_opened = None
 
-      self.file_opened = open(path + fname, mode)
-      return self.file_opened
+    # Initialize SD Card device
+    def setup(self):
+        pass
 
-    except Exception as e:
-      self.file_opened = None
-      print('sccard_class.file_open Exception:', e, path, fname, mode)
+    # Opened file
+    def file_opened(self):
+        return self.file_opened
 
-    return None
+    # File open, needs to close the file
+    def file_open(self, path, fname, mode = 'r'):
+        try:
+            if not self.file_opened is None:
+                self.file_opened.close()
+                self.file_opened = None
 
-  # Close the file opened currently
-  def file_close(self):
-    try:
-      if not self.file_opened is None:
-        self.file_opened.close()
+            self.file_opened = open(path + fname, mode)
+            return self.file_opened
 
-    except Exception as e:
-      print('sccard_class.file_open Exception:', e, path, fname, mode)
+        except Exception as e:
+            self.file_opened = None
+            print('sccard_class.file_open Exception:', e, path, fname, mode)
 
-    self.file_opened = None
+        return None
 
-  # Read JSON format file, then retun JSON data
-  def json_read(self, path, fname):
-    json_data = None
-    try:
-      with open(path + fname, 'r') as f:
-        json_data = json.load(f)
+    # Close the file opened currently
+    def file_close(self):
+        try:
+            if not self.file_opened is None:
+                self.file_opened.close()
 
-    except Exception as e:
-      print('sccard_class.json_read Exception:', e, path, fname)
+        except Exception as e:
+            print('sdcard_class.file_open Exception:', e, path, fname, mode)
 
-    return json_data
+        self.file_opened = None
 
-  # Write JSON format file
-  def json_write(self, path, fname, json_data):
-    try:
-      with open(path + fname, 'w') as f:
-        json.dump(json_data, f)
+    # Read JSON format file, then retun JSON data
+    def json_read(self, path, fname):
+        json_data = None
+        try:
+            with open(path + fname, 'r') as f:
+                json_data = json.load(f)
 
-      return True
+        except Exception as e:
+            print('sccard_class.json_read Exception:', e, path, fname)
 
-    except Exception as e:
-      print('sccard_class.json_write Exception:', e, path, fname)
+        return json_data
 
-    return False
+    # Write JSON format file
+    def json_write(self, path, fname, json_data):
+        try:
+            with open(path + fname, 'w') as f:
+                json.dump(json_data, f)
+
+            return True
+
+        except Exception as e:
+            print('sccard_class.json_write Exception:', e, path, fname)
+
+        return False
 
 ################# End of SD Card Class Definition #################
 
@@ -373,7 +362,7 @@ class midi_class:
         self.key_names = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B']
         self.USE_GMBANK = 0                              # GM bank number (normally 0, option is 127)
         #self.USE_GMBANK = 127
-        self.GM_FILE_PATH = '/SD/SYNTH/MIDIFILE/'       # GM program names list file path
+        self.GM_FILE_PATH = '/SYNTH/MIDIFILE/'       # GM program names list file path
 
     # Setup
     def setup(self, uart = None):
@@ -522,7 +511,7 @@ class midi_in_player_class():
     self.midi_obj = midi_obj
     self.midi_in_ch = 0                               # MIDI IN channel to edit
     self.midi_in_set_num = 0                          # MIDI IN setting file number to load/save
-    self.MIDI_IN_FILE_PATH = '/SD/SYNTH/MIDIUNIT/' 	  # MIDI IN setting files path
+    self.MIDI_IN_FILE_PATH = '/SYNTH/MIDIUNIT/' 	  # MIDI IN setting files path
     self.MIDI_SET_FILES_MAX = 1000                    # Maximum MIDI IN setting files
 
     # MIDI-IN player
@@ -857,7 +846,7 @@ class sequencer_class():
     self.SEQ_FILE_MAX = 1000
 
     # Sequencer file path
-    self.SEQUENCER_FILE_PATH = '/SD/SYNTH/SEQFILE/'
+    self.SEQUENCER_FILE_PATH = '/SYNTH/SEQFILE/'
 
   # Set delegation class for graphics
   def delegate_graphics(self, view_delegate_obj):
@@ -1479,9 +1468,9 @@ class sequencer_class():
     score_len = len(self.seq_score)
     play_slot = 0
     while play_slot < score_len:
-#      print('SEQ POINT:', time_cursor, play_slot)
+      print('SEQ POINT:', time_cursor, play_slot)
       score = self.seq_score[play_slot]
-#      print('SCORE:', play_slot, score)
+      print('SCORE:', play_slot, score)
 
       # Scan stop button (PLAY-->PAUSE-->STOP)
       if not (func_pause_or_stop is None or func_pause_to_stop is None):
@@ -2372,7 +2361,6 @@ if __name__ == '__main__':
 
         # SD cars (Internal memory file for PICO)
         sdcard_obj = sdcard_class()
-        sdcard_obj.setup()
 
         # Device Manager
         device_manager_obj = device_manager_class()
